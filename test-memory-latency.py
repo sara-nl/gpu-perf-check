@@ -60,12 +60,18 @@ def measure_memory_latency(gpu_id=0, tensor_size_bytes=1, runs=5, verbose=True, 
 
 def sweep_memory_latency(gpu_id=0, sizes_bytes=None, runs=5, verbose=True):
     """
-    Sweep over a range of tensor sizes (in bytes), return dict with size, write/read avg/stdev latencies
+    Sweep over a range of tensor sizes (in bytes), return dict with size, write/read avg/stdev latencies and bandwidths
     Warms up for the first few (smallest) sizes.
     """
     if sizes_bytes is None:
         sizes_bytes = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
-    results = {'size_bytes': [], 'write_ms_mean': [], 'write_ms_std': [], 'read_ms_mean': [], 'read_ms_std': []}
+    results = {
+        'size_bytes': [],
+        'write_ms_mean': [], 'write_ms_std': [],
+        'read_ms_mean': [], 'read_ms_std': [],
+        'write_bw_mean': [], 'write_bw_std': [],
+        'read_bw_mean': [], 'read_bw_std': []
+    }
     for idx, size in enumerate(sizes_bytes):
         try:
             # Warmup for the first 5 (smallest) sizes
@@ -76,6 +82,17 @@ def sweep_memory_latency(gpu_id=0, sizes_bytes=None, runs=5, verbose=True):
             results['write_ms_std'].append(w_std * 1e3)
             results['read_ms_mean'].append(r_mean * 1e3)
             results['read_ms_std'].append(r_std * 1e3)
+            # Bandwidth in GB/s
+            size_gb = size / 1e9
+            write_bw = size_gb / w_mean if w_mean > 0 else 0
+            read_bw = size_gb / r_mean if r_mean > 0 else 0
+            # For stddev, propagate errors (relative stddev)
+            write_bw_std = write_bw * (w_std / w_mean) if w_mean > 0 else 0
+            read_bw_std = read_bw * (r_std / r_mean) if r_mean > 0 else 0
+            results['write_bw_mean'].append(write_bw)
+            results['write_bw_std'].append(write_bw_std)
+            results['read_bw_mean'].append(read_bw)
+            results['read_bw_std'].append(read_bw_std)
         except RuntimeError as e:
             if verbose:
                 print(f"Failed for size {size} bytes: {e}")
@@ -93,12 +110,16 @@ def plot_latency_results(results, output_file=None, gpu_name=None):
     write_stds = np.array(results['write_ms_std'])
     read_means = np.array(results['read_ms_mean'])
     read_stds = np.array(results['read_ms_std'])
+    write_bw_means = np.array(results.get('write_bw_mean', []))
+    write_bw_stds = np.array(results.get('write_bw_std', []))
+    read_bw_means = np.array(results.get('read_bw_mean', []))
+    read_bw_stds = np.array(results.get('read_bw_std', []))
 
-    plt.figure(figsize=(10, 6))
-    plt.errorbar(sizes, write_means, yerr=write_stds, label='Write', fmt='-o')
-    plt.errorbar(sizes, read_means, yerr=read_stds, label='Read', fmt='-o')
-    plt.xscale('log', base=2)
-    plt.yscale('log')
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+    l1 = ax1.errorbar(sizes, write_means, yerr=write_stds, label='Write Latency', fmt='-o', color='tab:blue')
+    l2 = ax1.errorbar(sizes, read_means, yerr=read_stds, label='Read Latency', fmt='-o', color='tab:orange')
+    ax1.set_xscale('log', base=2)
+    ax1.set_yscale('log')
 
     # Format x-ticks as human-readable bytes
     def format_bytes(x, pos=None):
@@ -110,15 +131,12 @@ def plot_latency_results(results, output_file=None, gpu_name=None):
             return f"{int(x/1024**2)} MiB"
         else:
             return f"{int(x/1024**3)} GiB"
-    ax = plt.gca()
-    ax.xaxis.set_major_formatter(ticker.FuncFormatter(format_bytes))
-    ax.xaxis.set_major_locator(ticker.LogLocator(base=2))
-
-    # Minor ticks/gridlines (log2, auto subs)
-    ax.xaxis.set_minor_locator(ticker.LogLocator(base=2, subs='auto', numticks=100))
-    ax.xaxis.set_minor_formatter(ticker.NullFormatter())
-    ax.grid(True, which='major', axis='x', ls='-', lw=1, alpha=0.7)
-    ax.grid(True, which='minor', axis='x', ls=':', lw=0.7, alpha=0.5)
+    ax1.xaxis.set_major_formatter(ticker.FuncFormatter(format_bytes))
+    ax1.xaxis.set_major_locator(ticker.LogLocator(base=2))
+    ax1.xaxis.set_minor_locator(ticker.LogLocator(base=2, subs='auto', numticks=100))
+    ax1.xaxis.set_minor_formatter(ticker.NullFormatter())
+    ax1.grid(True, which='major', axis='x', ls='-', lw=1, alpha=0.7)
+    ax1.grid(True, which='minor', axis='x', ls=':', lw=0.7, alpha=0.5)
 
     # Format y-ticks as human-readable time units (log scale)
     def format_time(y, pos=None):
@@ -132,17 +150,46 @@ def plot_latency_results(results, output_file=None, gpu_name=None):
             return f"{y:.2f} ms"
         else:
             return f"{y/1e3:.2f} s"
-    ax.yaxis.set_major_formatter(ticker.FuncFormatter(format_time))
-    ax.yaxis.set_major_locator(ticker.LogLocator(base=10))
+    ax1.yaxis.set_major_formatter(ticker.FuncFormatter(format_time))
+    ax1.yaxis.set_major_locator(ticker.LogLocator(base=10))
 
-    plt.xlabel('Tensor Size')
-    plt.ylabel('Latency')
-    title = 'GPU Memory Latency'
+    ax1.set_xlabel('Tensor Size')
+    ax1.set_ylabel('Latency')
+
+    # Bandwidth on secondary axis
+    ax2 = ax1.twinx()
+    l3 = l4 = None
+    if len(write_bw_means) > 0:
+        l3 = ax2.errorbar(sizes, write_bw_means, yerr=write_bw_stds, label='Write Bandwidth', fmt='--s', color='tab:green')
+    if len(read_bw_means) > 0:
+        l4 = ax2.errorbar(sizes, read_bw_means, yerr=read_bw_stds, label='Read Bandwidth', fmt='--s', color='tab:red')
+    ax2.set_yscale('log')
+    def format_bw(y, pos=None):
+        if y == 0:
+            return "0"
+        elif y < 1:
+            return f"{y*1e3:.1f} MB/s"
+        elif y < 1e3:
+            return f"{y:.2f} GB/s"
+        else:
+            return f"{y/1e3:.2f} TB/s"
+    ax2.yaxis.set_major_formatter(ticker.FuncFormatter(format_bw))
+    ax2.set_ylabel('Bandwidth (GB/s)')
+    ax2.yaxis.label.set_color('tab:green')
+
+    # Combine legends from both axes
+    lines, labels = ax1.get_legend_handles_labels()
+    if l3 is not None or l4 is not None:
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        lines += lines2
+        labels += labels2
+    ax1.legend(lines, labels, loc='upper left')
+
+    title = 'GPU Memory Latency & Bandwidth'
     if gpu_name:
         title += f' ({gpu_name})'
     plt.title(title)
-    plt.legend()
-    plt.grid(True, which="both", axis='y', ls="--", lw=0.5)
+    ax1.grid(True, which="both", axis='y', ls="--", lw=0.5)
     plt.tight_layout()
 
     if output_file:
