@@ -122,16 +122,16 @@ def plot_latency_results(results, output_file=None, gpu_name=None):
     ax1.set_yscale('log')
 
     # Format x-ticks as human-readable bytes
-    def format_bytes(x, pos=None):
+    def format_bytes(x, pos=None, suffix=""):
         if x < 1024:
-            return f"{int(x)} B"
+            return f"{int(x)} B{suffix}"
         elif x < 1024**2:
-            return f"{int(x/1024)} KiB"
+            return f"{int(x/1024)} KiB{suffix}"
         elif x < 1024**3:
-            return f"{int(x/1024**2)} MiB"
+            return f"{int(x/1024**2)} MiB{suffix}"
         else:
-            return f"{int(x/1024**3)} GiB"
-    ax1.xaxis.set_major_formatter(ticker.FuncFormatter(format_bytes))
+            return f"{int(x/1024**3)} GiB{suffix}"
+    ax1.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: format_bytes(x, pos)))
     ax1.xaxis.set_major_locator(ticker.LogLocator(base=2))
     ax1.xaxis.set_minor_locator(ticker.LogLocator(base=2, subs='auto', numticks=100))
     ax1.xaxis.set_minor_formatter(ticker.NullFormatter())
@@ -160,21 +160,13 @@ def plot_latency_results(results, output_file=None, gpu_name=None):
     ax2 = ax1.twinx()
     l3 = l4 = None
     if len(write_bw_means) > 0:
-        l3 = ax2.errorbar(sizes, write_bw_means, yerr=write_bw_stds, label='Write Bandwidth', fmt='--s', color='tab:green')
+        l3 = ax2.errorbar(sizes, write_bw_means * 1024**3, yerr=write_bw_stds * 1024**3, label='Write Bandwidth', fmt='--s', color='tab:green')
     if len(read_bw_means) > 0:
-        l4 = ax2.errorbar(sizes, read_bw_means, yerr=read_bw_stds, label='Read Bandwidth', fmt='--s', color='tab:red')
+        l4 = ax2.errorbar(sizes, read_bw_means * 1024**3, yerr=read_bw_stds * 1024**3, label='Read Bandwidth', fmt='--s', color='tab:red')
     ax2.set_yscale('log')
-    def format_bw(y, pos=None):
-        if y == 0:
-            return "0"
-        elif y < 1:
-            return f"{y*1e3:.1f} MB/s"
-        elif y < 1e3:
-            return f"{y:.2f} GB/s"
-        else:
-            return f"{y/1e3:.2f} TB/s"
-    ax2.yaxis.set_major_formatter(ticker.FuncFormatter(format_bw))
-    ax2.set_ylabel('Bandwidth (GB/s)')
+    # Bandwidth is now in bytes/sec, so use the same formatter as bytes, with '/s' suffix
+    ax2.yaxis.set_major_formatter(ticker.FuncFormatter(lambda y, pos: format_bytes(y, pos, suffix='/s')))
+    ax2.set_ylabel('Bandwidth (bytes/sec, powers of 2)')
     ax2.yaxis.label.set_color('tab:green')
 
     # Combine legends from both axes
