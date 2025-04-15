@@ -114,11 +114,11 @@ def plot_latency_results(results, output_file=None, gpu_name=None):
     ax.xaxis.set_major_formatter(ticker.FuncFormatter(format_bytes))
     ax.xaxis.set_major_locator(ticker.LogLocator(base=2))
 
-    # Add minor ticks and gridlines for log-scale x-axis
+    # Minor ticks/gridlines (log2, auto subs)
     ax.xaxis.set_minor_locator(ticker.LogLocator(base=2, subs='auto', numticks=100))
     ax.xaxis.set_minor_formatter(ticker.NullFormatter())
-    ax.grid(True, which='major', axis='x', ls='-', lw=0.8, alpha=0.7)
-    ax.grid(True, which='minor', axis='x', ls=':', lw=0.5, alpha=0.5)
+    ax.grid(True, which='major', axis='x', ls='-', lw=1, alpha=0.7)
+    ax.grid(True, which='minor', axis='x', ls=':', lw=0.7, alpha=0.5)
 
     # Format y-ticks as human-readable time units (log scale)
     def format_time(y, pos=None):
@@ -171,7 +171,7 @@ if __name__ == "__main__":
     free_mem_bytes = torch.cuda.mem_get_info(args.gpu)[0]
 
     # Set a safer upper bound (e.g., 40% of free memory) to avoid OOM
-    max_mem_bytes = int(free_mem_bytes * 0.4)
+    max_mem_bytes = int(free_mem_bytes * 0.45)
 
     # Nice size steps: add lower-end sizes and powers of 2 up to 0% of available GPU memory
     sizes_bytes = []
@@ -185,8 +185,8 @@ if __name__ == "__main__":
     results = sweep_memory_latency(gpu_id=args.gpu, sizes_bytes=sizes_bytes, runs=args.runs, verbose=True)
 
     outfile = args.outfile
+    gpu_name = torch.cuda.get_device_name(args.gpu)
     if outfile is None:
-        gpu_name = torch.cuda.get_device_name(args.gpu)
         outfile = sanitize_filename(gpu_name) + ".png"
     else:
         gpu_name = torch.cuda.get_device_name(args.gpu)
