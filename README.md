@@ -20,7 +20,7 @@ This project provides scripts to benchmark GPU memory latency and bandwidth usin
   - The contents of the tensor are read by copying it to another tensor (`outp_tensor.copy_(inp_tensor)`), ensuring all elements are accessed.
 
 ### Bandwidth Calculation
-- For each memory operation, bandwidth is calculated as:
+- For each memory operation, bandwidth is calculated as the reciprocal of the latency:
   - **Bandwidth (GiB/s) = Tensor Size (GiB) / Latency (s)**
 - Standard deviation is propagated from the latency measurements.
 

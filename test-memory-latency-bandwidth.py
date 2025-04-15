@@ -232,7 +232,7 @@ if __name__ == "__main__":
     i = 0
     while 2**i <= max_mem_bytes:
         sizes_bytes.append(2**i)
-        i += 2
+        i += 1
 
     results = sweep_memory_latency(gpu_id=args.gpu, sizes_bytes=sizes_bytes, runs=args.runs, verbose=True)
 
