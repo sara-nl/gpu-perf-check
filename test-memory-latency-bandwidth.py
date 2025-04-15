@@ -1,12 +1,7 @@
 import torch
-import time
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
 import numpy as np
 
 
-def init_tensor(num_elements, device):
-    return torch.randint(0, 256, (num_elements,), dtype=torch.uint8, device=device)
 
 def measure_memory_latency(gpu_id=0, tensor_size_bytes=1, runs=5, verbose=True, warmup=True):
     """
@@ -21,12 +16,12 @@ def measure_memory_latency(gpu_id=0, tensor_size_bytes=1, runs=5, verbose=True, 
         print(f"Measuring memory latency on GPU {gpu_id}: {torch.cuda.get_device_name(gpu_id)}")
 
     # Pre-allocate tensor
-    inp_tensor = torch.empty((num_elements,), dtype=torch.uint8, device=device)
-    outp_tensor = torch.empty((num_elements,), dtype=torch.uint8, device=device)
+    inp_tensor = torch.empty((tensor_size_bytes,), dtype=torch.uint8, device=device)
+    outp_tensor = torch.empty((tensor_size_bytes,), dtype=torch.uint8, device=device)
 
     # Warmup: run a write/read operation before actual timing
     if warmup:
-        inp_tensor.fill_(1)
+        inp_tensor.fill_(255)
         torch.cuda.synchronize()
         outp_tensor.copy_(inp_tensor)
         torch.cuda.synchronize()
@@ -35,27 +30,27 @@ def measure_memory_latency(gpu_id=0, tensor_size_bytes=1, runs=5, verbose=True, 
     read_latencies = []
     for _ in range(runs):
         # Write timing
-        # zeroes for as slow a write speed as possible
-        inp_tensor.fill_(0)
+        inp_tensor.fill_(255)
         start_evt = torch.cuda.Event(enable_timing=True)
         end_evt = torch.cuda.Event(enable_timing=True)
         start_evt.record()
-        inp_tensor.fill_(255)
+        inp_tensor.zero_()
         end_evt.record()
         torch.cuda.synchronize()
-        write_latencies.append(start_evt.elapsed_time(end_evt) / 1e3)  # ms to s
+        # Convert ms to seconds for all calculations
+        write_latencies.append(start_evt.elapsed_time(end_evt) / 1e3)
 
         # Read timing (clone all elements)
-        # zeroes for as quick a write speed as possible
-        inp_tensor.fill_(0)
-        outp_tensor.fill_(0)
+        inp_tensor.zero_()
+        outp_tensor.zero_()
         start_evt2 = torch.cuda.Event(enable_timing=True)
         end_evt2 = torch.cuda.Event(enable_timing=True)
         start_evt2.record()
         outp_tensor.copy_(inp_tensor)
         end_evt2.record()
         torch.cuda.synchronize()
-        read_latencies.append(start_evt2.elapsed_time(end_evt2) / 1e3)  # ms to s
+        # Convert ms to seconds for all calculations
+        read_latencies.append(start_evt2.elapsed_time(end_evt2) / 1e3)
 
     write_latencies = np.array(write_latencies)
     read_latencies = np.array(read_latencies)
@@ -68,8 +63,8 @@ def measure_memory_latency(gpu_id=0, tensor_size_bytes=1, runs=5, verbose=True, 
 
     if verbose:
         print(f"Tensor size: {tensor_size_bytes} bytes")
-        print(f"Write latency: {write_mean * 1e3:.3f} ± {write_std * 1e3:.3f} ms")
-        print(f"Read latency: {read_mean * 1e3:.3f} ± {read_std * 1e3:.3f} ms")
+        print(f"Write latency: {write_mean*1e3:.3f} ± {write_std*1e3:.3f} ms")
+        print(f"Read latency: {read_mean*1e3:.3f} ± {read_std*1e3:.3f} ms")
     return write_mean, write_std, read_mean, read_std
 
 
@@ -79,7 +74,8 @@ def sweep_memory_latency(gpu_id=0, sizes_bytes=None, runs=5, verbose=True):
     Warms up for the first few (smallest) sizes.
     """
     if sizes_bytes is None:
-        sizes_bytes = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+        sizes_bytes = [1]
+
     results = {
         'size_bytes': [],
         'write_ms_mean': [], 'write_ms_std': [],
@@ -87,9 +83,9 @@ def sweep_memory_latency(gpu_id=0, sizes_bytes=None, runs=5, verbose=True):
         'write_bw_mean': [], 'write_bw_std': [],
         'read_bw_mean': [], 'read_bw_std': []
     }
-    for idx, size in enumerate(sizes_bytes):
+    for _, size in enumerate(sizes_bytes):
         try:
-            # Warmup for the first 5 (smallest) sizes
+            # Warmup always
             warmup = True
             w_mean, w_std, r_mean, r_std = measure_memory_latency(gpu_id=gpu_id, tensor_size_bytes=size, runs=runs, verbose=verbose, warmup=warmup)
             results['size_bytes'].append(size)
@@ -98,10 +94,10 @@ def sweep_memory_latency(gpu_id=0, sizes_bytes=None, runs=5, verbose=True):
             results['read_ms_mean'].append(r_mean * 1e3)
             results['read_ms_std'].append(r_std * 1e3)
 
-            # Bandwidth in GiB/s
-            size_gb = size / 2**30
-            write_bw = size_gb / w_mean if w_mean > 0 else 0
-            read_bw = size_gb / r_mean if r_mean > 0 else 0
+            # Bandwidth in GiB/s (latency in seconds)
+            size_gib = size / 2**30
+            write_bw = size_gib / w_mean if w_mean > 0 else 0
+            read_bw = size_gib / r_mean if r_mean > 0 else 0
             # For stddev, propagate errors (relative stddev)
             write_bw_std = write_bw * (w_std / w_mean) if w_mean > 0 else 0
             read_bw_std = read_bw * (r_std / r_mean) if r_mean > 0 else 0
@@ -135,7 +131,7 @@ def plot_latency_results(results, output_file=None, gpu_name=None):
     l1 = ax1.errorbar(sizes, write_means, yerr=write_stds, label='Write Latency', fmt='-o', color='tab:blue')
     l2 = ax1.errorbar(sizes, read_means, yerr=read_stds, label='Read Latency', fmt='-o', color='tab:orange')
     ax1.set_xscale('log', base=2)
-    ax1.set_yscale('log')
+    ax1.set_yscale('log', base=10)
 
     # Format x-ticks as human-readable bytes
     def format_bytes(x, pos=None, suffix=""):
@@ -145,8 +141,10 @@ def plot_latency_results(results, output_file=None, gpu_name=None):
             return f"{int(x/1024)} KiB{suffix}"
         elif x < 1024**3:
             return f"{int(x/1024**2)} MiB{suffix}"
-        else:
+        elif x < 1024**4:
             return f"{int(x/1024**3)} GiB{suffix}"
+        else:
+            return f"{int(x/1024**4)} TiB{suffix}"
     ax1.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: format_bytes(x, pos)))
     ax1.xaxis.set_major_locator(ticker.LogLocator(base=2))
     ax1.xaxis.set_minor_locator(ticker.LogLocator(base=2, subs='auto', numticks=100))
@@ -179,11 +177,10 @@ def plot_latency_results(results, output_file=None, gpu_name=None):
         l3 = ax2.errorbar(sizes, write_bw_means * 1024**3, yerr=write_bw_stds * 1024**3, label='Write Bandwidth', fmt='--s', color='tab:green')
     if len(read_bw_means) > 0:
         l4 = ax2.errorbar(sizes, read_bw_means * 1024**3, yerr=read_bw_stds * 1024**3, label='Read Bandwidth', fmt='--s', color='tab:red')
-    ax2.set_yscale('log')
+    ax2.set_yscale('log', base=2)
     # Bandwidth is now in bytes/sec, so use the same formatter as bytes, with '/s' suffix
     ax2.yaxis.set_major_formatter(ticker.FuncFormatter(lambda y, pos: format_bytes(y, pos, suffix='/s')))
     ax2.set_ylabel('Bandwidth (bytes/sec)')
-    ax2.yaxis.label.set_color('tab:green')
 
     # Combine legends from both axes
     lines, labels = ax1.get_legend_handles_labels()
@@ -232,7 +229,7 @@ if __name__ == "__main__":
     sizes_bytes = []
     # Only include powers of 2 above 512 bytes
 
-    i = 1
+    i = 0
     while 2**i <= max_mem_bytes:
         sizes_bytes.append(2**i)
         i += 2
