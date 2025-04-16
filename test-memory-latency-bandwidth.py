@@ -1,81 +1,97 @@
 import torch
 import numpy as np
+from functools import partial
 
+
+
+def profile_op(
+    op_fn,
+    setup_fn=None,
+    n_warmup=5,
+    runs=5,
+):
+    """
+    Generic GPU profiling utility.
+    - setup_fn: function to set up and return any resources/inputs (e.g. tensors)
+    - op_fn: function that performs the operation to time (accepts setup_fn's outputs)
+    - warmup_fn: function to warm up the op (accepts setup_fn's outputs)
+    - teardown_fn: function to clean up (accepts setup_fn's outputs)
+    Returns: dict with 'mean', 'std', 'latencies'
+    """
+    import torch
+    import numpy as np
+    
+    for _ in range(n_warmup):
+        if setup_fn:
+            setup_fn()
+        op_fn()
+        torch.cuda.synchronize()
+    
+    latencies = []
+    for _ in range(runs):
+        if setup_fn:
+            setup_fn()
+        start_evt = torch.cuda.Event(enable_timing=True)
+        end_evt = torch.cuda.Event(enable_timing=True)
+        start_evt.record()
+        op_fn()
+        end_evt.record()
+        torch.cuda.synchronize()
+        latencies.append(start_evt.elapsed_time(end_evt) / 1e3)  # seconds
+
+    latencies = np.array(latencies)
+    return {
+        'mean': float(latencies.mean()),
+        'std': float(latencies.std()),
+        'latencies': latencies.tolist(),
+        'runs': runs
+    }
 
 
 def measure_memory_latency(gpu_id=0, tensor_size_bytes=1, runs=5, verbose=True, warmup=True):
     """
     Measures the latency of reading from and writing to GPU memory using a tensor of given size (in bytes).
-    Uses CUDA event timers for accurate timing.
-    Pre-allocates the tensor to avoid allocation overhead.
+    Uses profile_op for generic profiling.
     Returns (write_mean, write_std, read_mean, read_std) in seconds.
     """
+    import torch
     torch.cuda.set_device(gpu_id)
     device = torch.device(f"cuda:{gpu_id}")
-    if verbose:
-        print(f"Measuring memory latency on GPU {gpu_id}: {torch.cuda.get_device_name(gpu_id)}")
 
-    # Pre-allocate tensor
-    inp_tensor = torch.empty((tensor_size_bytes,), dtype=torch.uint8, device=device)
-    outp_tensor = torch.empty((tensor_size_bytes,), dtype=torch.uint8, device=device)
+    def setup():
+        inp_tensor = torch.empty((tensor_size_bytes,), dtype=torch.uint8, device=device)
+        outp_tensor = torch.empty((tensor_size_bytes,), dtype=torch.uint8, device=device)
+        return inp_tensor, outp_tensor
 
-    # Warmup: run a write/read operation before actual timing
-    if warmup:
-        inp_tensor.fill_(255)
-        torch.cuda.synchronize()
-        outp_tensor.copy_(inp_tensor)
-        torch.cuda.synchronize()
+    inp_tensor, outp_tensor = setup()
 
-    write_latencies = []
-    read_latencies = []
-    for _ in range(runs):
-        # Write timing
-        inp_tensor.fill_(255)
-        start_evt = torch.cuda.Event(enable_timing=True)
-        end_evt = torch.cuda.Event(enable_timing=True)
-        start_evt.record()
-        inp_tensor.zero_()
-        end_evt.record()
-        torch.cuda.synchronize()
-        # Convert ms to seconds for all calculations
-        write_latencies.append(start_evt.elapsed_time(end_evt) / 1e3)
-
-        # Read timing (clone all elements)
+    def read_pre_setup(inp_tensor, outp_tensor):
         inp_tensor.zero_()
         outp_tensor.zero_()
-        start_evt2 = torch.cuda.Event(enable_timing=True)
-        end_evt2 = torch.cuda.Event(enable_timing=True)
-        start_evt2.record()
-        outp_tensor.copy_(inp_tensor)
-        end_evt2.record()
-        torch.cuda.synchronize()
-        # Convert ms to seconds for all calculations
-        read_latencies.append(start_evt2.elapsed_time(end_evt2) / 1e3)
 
-    write_latencies = np.array(write_latencies)
-    read_latencies = np.array(read_latencies)
+    write_pre_setup = partial(inp_tensor.fill_, 255)
+    write_op = inp_tensor.zero_
 
-    write_mean = write_latencies.mean()
-    read_mean = read_latencies.mean()
+    read_pre_setup = partial(read_pre_setup, inp_tensor, outp_tensor)
+    read_op = partial(outp_tensor.copy_, inp_tensor)
 
-    read_std = read_latencies.std()
-    write_std = write_latencies.std()
+    write_stats = profile_op(op_fn=write_op, setup_fn=write_pre_setup, runs=runs)
+    read_stats = profile_op(op_fn=read_op, setup_fn=read_pre_setup, runs=runs)
 
     if verbose:
         print(f"Tensor size: {tensor_size_bytes} bytes")
-        print(f"Write latency: {write_mean*1e3:.3f} ± {write_std*1e3:.3f} ms")
-        print(f"Read latency: {read_mean*1e3:.3f} ± {read_std*1e3:.3f} ms")
-    return write_mean, write_std, read_mean, read_std
+        print(f"Write latency: {write_stats['mean']*1e3:.3f} ± {write_stats['std']*1e3:.3f} ms")
+        print(f"Read latency: {read_stats['mean']*1e3:.3f} ± {read_stats['std']*1e3:.3f} ms")
+    return write_stats['mean'], write_stats['std'], read_stats['mean'], read_stats['std']
 
 
 def sweep_memory_latency(gpu_id=0, sizes_bytes=None, runs=5, verbose=True):
     """
     Sweep over a range of tensor sizes (in bytes), return dict with size, write/read avg/stdev latencies and bandwidths
-    Warms up for the first few (smallest) sizes.
+    Uses the refactored measure_memory_latency.
     """
     if sizes_bytes is None:
         sizes_bytes = [1]
-
     results = {
         'size_bytes': [],
         'write_ms_mean': [], 'write_ms_std': [],
@@ -85,7 +101,6 @@ def sweep_memory_latency(gpu_id=0, sizes_bytes=None, runs=5, verbose=True):
     }
     for _, size in enumerate(sizes_bytes):
         try:
-            # Warmup always
             warmup = True
             w_mean, w_std, r_mean, r_std = measure_memory_latency(gpu_id=gpu_id, tensor_size_bytes=size, runs=runs, verbose=verbose, warmup=warmup)
             results['size_bytes'].append(size)
