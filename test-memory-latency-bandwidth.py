@@ -48,7 +48,7 @@ def profile_op(
     }
 
 
-def measure_memory_latency(gpu_id=0, tensor_size_bytes=1, runs=5, verbose=True, warmup=True):
+def measure_memory_latency(gpu_id=0, tensor_size_bytes=1, runs=5, verbose=True, n_warmup=5):
     """
     Measures the latency of reading from and writing to GPU memory using a tensor of given size (in bytes).
     Uses profile_op for generic profiling.
@@ -101,8 +101,7 @@ def sweep_memory_latency(gpu_id=0, sizes_bytes=None, runs=5, verbose=True):
     }
     for _, size in enumerate(sizes_bytes):
         try:
-            warmup = True
-            w_mean, w_std, r_mean, r_std = measure_memory_latency(gpu_id=gpu_id, tensor_size_bytes=size, runs=runs, verbose=verbose, warmup=warmup)
+            w_mean, w_std, r_mean, r_std = measure_memory_latency(gpu_id=gpu_id, tensor_size_bytes=size, runs=runs, verbose=verbose)
             results['size_bytes'].append(size)
             results['write_ms_mean'].append(w_mean * 1e3)
             results['write_ms_std'].append(w_std * 1e3)
@@ -227,7 +226,7 @@ if __name__ == "__main__":
     parser.add_argument('--size', type=int, default=1, help='Base tensor size in bytes (default: 1)')
     parser.add_argument('--plot', action='store_true', help='Plot the results')
     parser.add_argument('--outfile', type=str, default=None, help='Output file for plot (optional, default: autodetect from GPU name)')
-    parser.add_argument('--runs', type=int, default=10, help='Number of runs per size (default: 5)')
+    parser.add_argument('--runs', type=int, default=16, help='Number of runs per size (default: 5)')
     args = parser.parse_args()
 
     def sanitize_filename(name):
