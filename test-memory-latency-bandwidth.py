@@ -161,10 +161,9 @@ def plot_latency_results(results, output_file=None, gpu_name=None):
             return f"{int(x/1024**4)} TiB{suffix}"
     ax1.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: format_bytes(x, pos)))
     ax1.xaxis.set_major_locator(ticker.LogLocator(base=2))
-    ax1.xaxis.set_minor_locator(ticker.LogLocator(base=2, subs='auto', numticks=100))
-    ax1.xaxis.set_minor_formatter(ticker.NullFormatter())
+    ax1.xaxis.set_minor_locator(ticker.LogLocator(base=2, subs='all'))
     ax1.grid(True, which='major', axis='x', ls='-', lw=1, alpha=0.7)
-    ax1.grid(True, which='minor', axis='x', ls=':', lw=0.7, alpha=0.5)
+    ax1.grid(True, which='minor', axis='x', ls=':', lw=0.1, alpha=0.5)
 
     # Format y-ticks as human-readable time units (log scale)
     def format_time(y, pos=None):
@@ -194,6 +193,10 @@ def plot_latency_results(results, output_file=None, gpu_name=None):
     ax2.set_yscale('log', base=2)
     # Bandwidth is now in bytes/sec, so use the same formatter as bytes, with '/s' suffix
     ax2.yaxis.set_major_formatter(ticker.FuncFormatter(lambda y, pos: format_bytes(y, pos, suffix='/s')))
+    ax2.yaxis.set_major_locator(ticker.LogLocator(base=2))
+    ax2.yaxis.set_minor_locator(ticker.LogLocator(base=2, subs='auto', numticks=100))
+    ax2.yaxis.set_minor_formatter(ticker.NullFormatter())
+    ax2.grid(True, which='minor', axis='y', ls=':', lw=0.7, alpha=0.5)
     ax2.set_ylabel('Bandwidth (bytes/sec)')
 
     # Combine legends from both axes
